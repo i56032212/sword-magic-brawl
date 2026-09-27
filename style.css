@@ -1,0 +1,16 @@
+html, body { margin: 0; height: 100%; background: #07070f; overflow: hidden; touch-action: none; -webkit-user-select: none; user-select: none; }
+#stage { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+#game { display: block; background: #000; image-rendering: auto; outline: none; box-shadow: 0 0 40px rgba(80,120,255,0.25); }
+#touch { display: none; position: fixed; inset: 0; pointer-events: none; }
+#touch button { pointer-events: auto; position: absolute; border: 2px solid rgba(255,255,255,0.5); background: rgba(20,24,50,0.45); color: #fff; font: bold 20px sans-serif; border-radius: 50%; touch-action: none; -webkit-tap-highlight-color: transparent; }
+#touch button.on { background: rgba(255,215,90,0.6); }
+#touch button small { display: block; font-size: 10px; font-weight: normal; }
+.pad { position: absolute; left: 16px; bottom: 16px; width: 168px; height: 168px; }
+.pad button { width: 56px; height: 56px; }
+.pad .u { left: 56px; top: 0; } .pad .d { left: 56px; bottom: 0; } .pad .l { left: 0; top: 56px; } .pad .r { right: 0; top: 56px; }
+.acts { position: absolute; right: 16px; bottom: 16px; width: 210px; height: 170px; }
+.acts button { width: 64px; height: 64px; }
+.acts .ba { right: 0; bottom: 40px; background: rgba(200,60,60,0.5); }
+.acts .bj { right: 72px; bottom: 0; background: rgba(60,160,60,0.5); }
+.acts .bd { right: 144px; bottom: 40px; background: rgba(60,100,200,0.5); }
+.acts .bp { right: 20px; top: -40px; width: 44px; height: 44px; font-size: 14px; }

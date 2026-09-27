@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>劍與魔法：亂鬥英雄</title>
+<meta name="description" content="仿《小朋友齊打交》風格的橫向捲軸清關動作遊戲：劍與魔法奇幻主題，5 名英雄、18 招、10 關 40 場。">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="stage">
+  <canvas id="game" width="960" height="540" tabindex="0" aria-label="劍與魔法：亂鬥英雄 遊戲畫面"></canvas>
+</div>
+<div id="touch" aria-hidden="true">
+  <div class="pad">
+    <button data-k="up" class="u">▲</button>
+    <button data-k="left" class="l">◀</button>
+    <button data-k="right" class="r">▶</button>
+    <button data-k="down" class="d">▼</button>
+  </div>
+  <div class="acts">
+    <button data-k="def" class="bd">D<small>防禦</small></button>
+    <button data-k="jmp" class="bj">J<small>跳躍</small></button>
+    <button data-k="atk" class="ba">A<small>攻擊</small></button>
+    <button data-k="pause" class="bp">II</button>
+  </div>
+</div>
+<noscript>請啟用 JavaScript 以遊玩本遊戲。</noscript>
+<script src="js/data.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/draw.js"></script>
+<script src="js/fighter.js"></script>
+<script src="js/ai.js"></script>
+<script src="js/game.js"></script>
+</body>
+</html>
