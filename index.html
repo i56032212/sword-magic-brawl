@@ -13,19 +13,16 @@
   <canvas id="game" width="960" height="540" tabindex="0" aria-label="劍與魔法：亂鬥英雄 遊戲畫面"></canvas>
 </div>
 <div id="touch" aria-hidden="true">
-  <div class="pad">
-    <button data-k="up" class="u">▲</button>
-    <button data-k="left" class="l">◀</button>
-    <button data-k="right" class="r">▶</button>
-    <button data-k="down" class="d">▼</button>
-  </div>
-  <div class="acts">
+  <div id="joy" class="ctl"><div id="joyBase" class="idle"><div id="joyKnob"></div></div></div>
+  <div id="skills" class="ctl"></div>
+  <div id="acts" class="ctl">
     <button data-k="def" class="bd">D<small>防禦</small></button>
+    <button data-k="roll" class="br">⟲<small>翻滾</small></button>
     <button data-k="jmp" class="bj">J<small>跳躍</small></button>
     <button data-k="atk" class="ba">A<small>攻擊</small></button>
-    <button data-k="pause" class="bp">II</button>
   </div>
 </div>
+<div id="rotate"><div><div class="ico">📱↻</div>請將手機轉為橫向，以獲得最佳遊戲體驗<br><small>（點一下關閉提示）</small></div></div>
 <noscript>請啟用 JavaScript 以遊玩本遊戲。</noscript>
 <script src="js/data.js"></script>
 <script src="js/audio.js"></script>

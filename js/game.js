@@ -5,13 +5,13 @@ const font = (sz, bold = true) => `${bold ? 'bold ' : ''}${sz}px ${FONT}`;
 
 // ---------- 輸入 ----------
 const Input = {
-  held: {}, queue: [], buffer: [], frame: 0, lastTap: { left: -99, right: -99 }, runTap: null,
+  held: {}, queue: [], buffer: [], frame: 0, lastTap: { left: -99, right: -99 }, runTap: null, skillQ: null, joy: { active: false, run: 0 },
   codeMap: { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down', KeyA: 'atk', KeyZ: 'atk', KeyJ: 'jmp', KeyX: 'jmp', Space: 'jmp', KeyD: 'def', KeyC: 'def', Enter: 'enter', KeyP: 'pause', Escape: 'esc', KeyM: 'mute', KeyK: 'dbgKill', KeyN: 'dbgNext', KeyI: 'dbgMp' },
-  down(k) {
+  down(k, noTap) {
     if (!this.held[k]) {
       this.queue.push(k); this.buffer.push({ k, f: this.frame });
       if (this.buffer.length > 12) this.buffer.shift();
-      if (k === 'left' || k === 'right') { if (this.frame - this.lastTap[k] < 15) this.runTap = k; this.lastTap[k] = this.frame; }
+      if ((k === 'left' || k === 'right') && !noTap) { if (this.frame - this.lastTap[k] < 15) this.runTap = k; this.lastTap[k] = this.frame; }
     }
     this.held[k] = true;
   },
@@ -48,7 +48,7 @@ window.addEventListener('blur', () => { Input.held = {}; });
 // ---------- 存檔 ----------
 function loadSave() { try { const s = JSON.parse(localStorage.getItem('smb_save') || 'null'); if (s && s.maxLevel) return s; } catch (e) {} return { maxLevel: 1, maxStage: 1, best: 0, won: false }; }
 function writeSave(s) { try { localStorage.setItem('smb_save', JSON.stringify(s)); } catch (e) {} }
-const newStats = () => ({ specials: {}, pickups: {}, throws: {}, kills: 0 });
+const newStats = () => ({ specials: {}, bossSpecials: {}, pickups: {}, throws: {}, kills: 0, grabs: 0, throwsBody: 0 });
 
 const DROP_TABLE = [['knife', 10], ['firebomb', 7], ['rock', 9], ['longsword', 7], ['hammer', 5], ['stick', 8], ['potion', 5], ['bread', 10], ['crystal', 7]];
 function randomItem() { let tot = 0; for (const [, w] of DROP_TABLE) tot += w; let r = Math.random() * tot; for (const [k, w] of DROP_TABLE) { if ((r -= w) < 0) return k; } return 'bread'; }
@@ -74,7 +74,7 @@ class Game {
   click(x, y) { for (let i = this.hot.length - 1; i >= 0; i--) { const h = this.hot[i]; if (x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h) { h.fn(); return; } } }
   addScore(n) { this.score += n; }
   floatText(f, text, color, size) { addParticle({ type: 'text', text, color, size: size || 16, x: f.x, y: f.y, z: f.z + f.h + 18, vz: 0.9, life: 42 }); }
-  nearestFoe(f) { let best = null, bd = 1e9; for (const t of this.fighters) { if (t.team === f.team || !t.alive) continue; const d = Math.abs(t.x - f.x) + Math.abs(t.y - f.y) * 2; if (d < bd) { bd = d; best = t; } } return best; }
+  nearestFoe(f) { let best = null, bd = 1e9; for (const t of this.fighters) { if (t.team === f.team || !t.alive) continue; const d = Math.abs(t.x - f.x) + Math.abs(t.y - f.y) * 2; if (t.stealth > 0 && d > 60) continue; if (d < bd) { bd = d; best = t; } } return best; }
   itemUnder(f) { return this.items.find(i => Math.abs(i.x - f.x) < 30 && Math.abs(i.y - f.y) < 18 && i.z <= 2) || null; }
   dropItem(type, x, y, dur) { const b = this.boundsFor({ team: 0 }); this.items.push({ type, x: clamp(x, b[0], b[1]), y: clamp(y, GROUND_TOP, GROUND_BOT), z: 20, vz: 4, dur: dur != null ? dur : ITEMS[type].dur }); }
   boundsFor(f) {
@@ -118,6 +118,8 @@ class Game {
     }
   }
   onDeath(f) {
+    for (const c of this.fighters) if (c.isClone && c.owner === f) c.life = 1;
+    if (f.isClone) { f.remove = true; return; }
     if (f.team === 1) {
       this.stats.kills++; this.addScore(Math.round((f.def.score || 500) * (1 + (this.level - 1) * 0.2) * (f.isBoss ? 6 : 1)));
       if (!f.isBoss && Math.random() < 0.22) this.dropItem(Math.random() < 0.5 ? ['bread', 'potion', 'crystal'][Math.floor(Math.random() * 3)] : randomItem(), f.x, f.y);
@@ -132,7 +134,7 @@ class Game {
   }
   spawnBoss(ci, x, y, count) {
     const L = this.level, strong = L > 5;
-    const hp = (strong ? 2.5 + 0.3 * (L - 6) : 1.7 + 0.3 * (L - 1)) * (count > 1 ? 0.75 : 1) * (L === 10 ? 0.85 : 1);
+    const hp = (strong ? 2.5 + 0.3 * (L - 6) : 1.7 + 0.3 * (L - 1)) * (count > 1 ? 0.75 : 1) * (L === 10 ? 0.85 : 1) * 1.15;
     const mult = { hp, pow: 0.6 + 0.055 * (L - 1), regen: 1.3 + 0.1 * L, spd: 0.95 + 0.012 * L, def: 1 + 0.02 * L };
     const f = new Fighter({ kind: 'char', def: CHARS[ci], ci, team: 1, x, y, face: -1, boss: true, strong, mult, level: L });
     f.ai = new BossAI(f, L); f.invuln = 40; this.fighters.push(f); return f;
@@ -180,9 +182,9 @@ class Game {
     // 死亡
     if (this.deathTimer > 0 && --this.deathTimer === 0) { this.go('gameover'); return; }
     if (this.isBoss) {
-      const alive = this.fighters.some(f => f.team === 1 && !f.remove && f.state !== 'dead');
+      const alive = this.fighters.some(f => f.team === 1 && !f.isClone && !f.remove && f.state !== 'dead');
       if (!alive && !this.clearTimer && p.alive) {
-        if (this.bossIdx < this.bossGroups.length - 1) { if (!this.fighters.some(f => f.team === 1 && !f.remove)) { this.bossIdx++; this.spawnBossGroup(); } }
+        if (this.bossIdx < this.bossGroups.length - 1) { if (!this.fighters.some(f => f.team === 1 && !f.isClone && !f.remove)) { this.bossIdx++; this.spawnBossGroup(); } }
         else this.clearTimer = 100;
       }
     } else {
@@ -199,7 +201,7 @@ class Game {
         const mult = { hp: 1 + 0.14 * (L - 1) + 0.05 * (S - 1), pow: 1 + 0.09 * (L - 1), spd: 1 + 0.02 * (L - 1) };
         for (const s of ready) this.spawnEnemy(s.type, (s.side > 0 ? this.lock + W + 50 : this.lock - 50), GROUND_TOP + 15 + Math.random() * (GROUND_BOT - GROUND_TOP - 30), mult);
       }
-      if (w && w.active && !this.spawnQ.length && !this.fighters.some(f => f.team === 1 && f.state !== 'dead')) {
+      if (w && w.active && !this.spawnQ.length && !this.fighters.some(f => f.team === 1 && !f.isClone && f.state !== 'dead')) {
         w.active = false; w.done = true; this.waveIdx++; this.lock = null;
         if (this.waveIdx >= this.waves.length) { if (!this.clearTimer) this.clearTimer = 90; }
         else { this.goTimer = 200; SFX.play('go'); }
@@ -232,6 +234,9 @@ class Game {
     I.atk = pr.has('atk'); I.jmp = pr.has('jmp'); I.def = !!h.def;
     if (I.atk || I.jmp) { const c = Input.command(I.atk ? 'atk' : 'jmp'); if (c) { I.special = c.cmd; I.sdir = c.sdir; Input.buffer.length = 0; } }
     if (Input.runTap) { I.run = true; I.mx = Input.runTap === 'right' ? 1 : -1; Input.runTap = null; }
+    I.dpress = pr.has('left') ? -1 : pr.has('right') ? 1 : 0; I.defPress = pr.has('def'); I.roll = pr.has('roll');
+    if (Input.joy.active) { if (Input.joy.run && I.mx === Input.joy.run) I.run = true; else if (!I.run) I.noRun = true; }
+    if (Input.skillQ) { if (Input.frame - Input.skillQ.f <= 15) { I.special = Input.skillQ.cmd; I.sdir = I.mx || 0; } else Input.skillQ = null; }
     return I;
   }
   updatePlay(pr) {
@@ -250,7 +255,7 @@ class Game {
       else { p.intent = emptyIntent(); const it = this.items.find(i => ITEMS[i.type].cat === 'heal' && Math.abs(i.x - p.x) < 300); if (it && p.hp < p.maxHp * 0.8) { p.intent.mx = Math.abs(it.x - p.x) > 20 ? sgn(it.x - p.x) : 0; p.intent.my = Math.abs(it.y - p.y) > 8 ? sgn(it.y - p.y) : 0; if (this.itemUnder(p) && this.frame % 10 === 0) p.intent.atk = true; } else { p.intent.mx = 1; p.intent.my = sgn(420 - p.y); } }
     }
     // 同時攻擊者
-    const grunts = this.fighters.filter(f => f.team === 1 && !f.isBoss && f.alive).sort((a, b) => Math.abs(a.x - p.x) - Math.abs(b.x - p.x));
+    const grunts = this.fighters.filter(f => f.team === 1 && !f.isBoss && !f.isClone && f.alive).sort((a, b) => Math.abs(a.x - p.x) - Math.abs(b.x - p.x));
     this.attackers = new Set(grunts.slice(0, 2 + Math.floor(this.level / 4)));
     for (const f of this.fighters) if (f.ai && f.alive && f !== p) f.ai.update(this);
     for (const f of this.fighters) f.update(this);
@@ -286,7 +291,9 @@ class Game {
           if (ok) { if (this.sub.i + 1 <= n) { SFX.play('confirm'); this.score = 0; this.stats = newStats(); this.startStage(this.sub.L, this.sub.i + 1); } else SFX.play('block'); }
           if (back) this.sub = null; break; }
         nav(10, 5); if (ok) { if (this.idx + 1 <= this.save.maxLevel) { SFX.play('confirm'); this.sub = { L: this.idx + 1, i: 0 }; this.sub.i = this.subMax() - 1; } else SFX.play('block'); } if (back) this.go('select'); break;
-      case 'moves': case 'controls': if (ok || back) { SFX.play('select'); this.go(this.movesFrom); } break;
+      case 'moves': if (pr.has('right')) { this.mpage = ((this.mpage || 0) + 1) % 6; SFX.play('select'); } if (pr.has('left')) { this.mpage = ((this.mpage || 0) + 5) % 6; SFX.play('select'); }
+        if (ok || back) { SFX.play('select'); this.go(this.movesFrom); } break;
+      case 'controls': if (ok || back) { SFX.play('select'); this.go(this.movesFrom); } break;
       case 'intro': this.previews.forEach(f => f.t++); if (this.frame - this.frame0 > (this.isBoss ? 130 : 100) || (ok && this.frame - this.frame0 > 20)) this.go('play'); break;
       case 'play': this.updatePlay(pr); break;
       case 'paused': { const m = this.pauseMenu(); nav(m.length); if (ok) m[this.idx].fn(); if (pr.has('pause') || pr.has('esc')) this.go('play'); break; }
@@ -299,13 +306,13 @@ class Game {
   subMax() { const L = this.sub.L; return L < this.save.maxLevel ? 4 : this.save.maxStage; }
   titleMenu() { return [
     { label: '開始遊戲', fn: () => { SFX.play('confirm'); this.go('select'); this.idx = this.ci; } },
-    { label: '招式表', fn: () => { SFX.play('select'); this.movesFrom = 'title'; this.go('moves'); } },
+    { label: '招式表', fn: () => { SFX.play('select'); this.movesFrom = 'title'; this.mpage = 0; this.go('moves'); } },
     { label: '操作說明', fn: () => { SFX.play('select'); this.movesFrom = 'title'; this.go('controls'); } },
     { label: '音效：' + (SFX.muted ? '關' : '開'), fn: () => { SFX.toggle(); SFX.play('select'); } },
   ]; }
   pauseMenu() { return [
     { label: '繼續遊戲', fn: () => this.go('play') },
-    { label: '招式表', fn: () => { this.movesFrom = 'paused'; this.go('moves'); } },
+    { label: '招式表', fn: () => { this.movesFrom = 'paused'; this.mpage = this.ci + 1; this.go('moves'); } },
     { label: '操作說明', fn: () => { this.movesFrom = 'paused'; this.go('controls'); } },
     { label: '重新開始本場', fn: () => { this.score = this.stageScore0; this.startStage(this.level, this.stage); } },
     { label: '音效：' + (SFX.muted ? '關' : '開'), fn: () => SFX.toggle() },
@@ -384,21 +391,23 @@ class Game {
     CHARS.forEach((c, i) => {
       const x = x0 + i * (cw + gap), y = 64, sel = i === this.idx;
       ctx.fillStyle = sel ? 'rgba(255,215,90,0.25)' : 'rgba(20,24,44,0.8)'; ctx.strokeStyle = sel ? '#ffd75a' : 'rgba(255,255,255,0.25)'; ctx.lineWidth = sel ? 3 : 1.5;
-      roundRect(ctx, x, y, cw, 290, 10); ctx.fill(); ctx.stroke();
-      this.hot.push({ x, y, w: cw, h: 290, fn: () => { if (this.idx === i) { this.ci = i; SFX.play('confirm'); this.go('levels'); this.idx = Math.min(9, this.save.maxLevel - 1); } else { this.idx = i; SFX.play('select'); } } });
-      const f = this.previews[i]; if (!sel) { f.state = 'idle'; } f.x = x + cw / 2; f.y = y + 150; f.face = 1; const s0 = f.scale; f.scale = 1.5;
+      roundRect(ctx, x, y, cw, 250, 10); ctx.fill(); ctx.stroke();
+      this.hot.push({ x, y, w: cw, h: 250, fn: () => { if (this.idx === i) { this.ci = i; SFX.play('confirm'); this.go('levels'); this.idx = Math.min(9, this.save.maxLevel - 1); } else { this.idx = i; SFX.play('select'); } } });
+      const f = this.previews[i]; if (!sel) { f.state = 'idle'; } f.x = x + cw / 2; f.y = y + 120; f.face = 1; const s0 = f.scale; f.scale = 1.5;
       drawFighter(ctx, f, 0, this.frame); f.scale = s0;
-      this.text(ctx, c.cls, x + cw / 2, y + 180, 22, sel ? '#ffe27a' : '#fff');
-      this.text(ctx, c.name, x + cw / 2, y + 200, 14, '#bbb');
+      this.text(ctx, c.cls, x + cw / 2, y + 146, 21, sel ? '#ffe27a' : '#fff');
+      this.text(ctx, c.name, x + cw / 2, y + 164, 13, '#bbb');
       const rows = [['生命', c.stats.hp, '#f55', c.hp], ['魔力', c.stats.mp, '#4af', c.mp], ['速度', c.stats.speed, '#5e5', c.speed.toFixed(1)], ['力量', c.stats.power, '#fa4', c.power.toFixed(2)]];
-      rows.forEach((r, k) => { const yy = y + 218 + k * 17; ctx.font = font(12); ctx.textAlign = 'left'; ctx.fillStyle = '#ddd'; ctx.fillText(r[0], x + 10, yy + 10);
+      rows.forEach((r, k) => { const yy = y + 174 + k * 17; ctx.font = font(12); ctx.textAlign = 'left'; ctx.fillStyle = '#ddd'; ctx.fillText(r[0], x + 10, yy + 10);
         for (let s = 0; s < 5; s++) { ctx.fillStyle = s < r[1] ? r[2] : 'rgba(255,255,255,0.15)'; ctx.fillRect(x + 44 + s * 18, yy + 1, 15, 10); }
         ctx.textAlign = 'right'; ctx.fillStyle = '#aaa'; ctx.font = font(11, false); ctx.fillText(r[3], x + cw - 8, yy + 10); });
     });
     const c = CHARS[this.idx];
-    ctx.fillStyle = 'rgba(10,12,30,0.85)'; roundRect(ctx, 30, 366, W - 60, 130, 10); ctx.fill();
-    this.text(ctx, `${c.cls}・${c.name}　— ${c.desc}`, 50, 394, 18, '#ffe27a', 'left');
-    c.specials.forEach((s, k) => { const yy = 424 + k * 24; this.text(ctx, `【${s.input}】`, 50, yy, 16, '#8cf', 'left', false); this.text(ctx, s.name, 150, yy, 16, '#fff', 'left', false); this.text(ctx, `MP ${s.mp}`, 250, yy, 14, '#6cf', 'left', false); this.text(ctx, s.desc, 320, yy, 14, '#ccc', 'left', false); });
+    ctx.fillStyle = 'rgba(10,12,30,0.85)'; roundRect(ctx, 20, 320, W - 40, 184, 10); ctx.fill();
+    this.text(ctx, `${c.cls}・${c.name}　— ${c.desc}`, 36, 346, 17, '#ffe27a', 'left');
+    c.specials.forEach((s, k) => { const cx = 36 + (k % 2) * 460, yy = 376 + Math.floor(k / 2) * 43;
+      this.text(ctx, `【${s.input}】`, cx, yy, 15, '#8cf', 'left', false); this.text(ctx, s.name, cx + 90, yy, 16, '#fff', 'left', false); this.text(ctx, `MP ${s.mp}`, cx + 190, yy, 13, '#6cf', 'left', false);
+      this.text(ctx, s.desc, cx + 8, yy + 18, 12, '#bbb', 'left', false); });
     this.text(ctx, '← → 選擇　A/Z 確認　D/C 返回', W / 2, 524, 14, '#ccc');
   }
   drawLevels(ctx) {
@@ -443,25 +452,32 @@ class Game {
   }
   drawMoves(ctx) {
     ctx.fillStyle = '#0e1024'; ctx.fillRect(0, 0, W, H);
-    this.text(ctx, '招式表（共 18 招）', W / 2, 34, 26, '#ffe27a');
-    const rows = [];
-    UNIVERSAL_MOVES.forEach(m => rows.push(['全角色', m.name, m.input, '—', m.desc, '#9fd']));
-    CHARS.forEach(c => c.specials.forEach(s => rows.push([c.cls, s.name, s.input, s.mp + '', s.desc, '#fff'])));
-    const cols = [30, 115, 215, 370, 420];
-    ctx.fillStyle = 'rgba(255,255,255,0.08)'; ctx.fillRect(20, 46, W - 40, 24);
-    ['角色', '招式', '指令', 'MP', '說明'].forEach((h, k) => this.text(ctx, h, cols[k], 64, 15, '#ffd75a', 'left', false));
-    rows.forEach((r, i) => {
-      const y = 92 + i * 23;
-      if (i % 2 === 0) { ctx.fillStyle = 'rgba(255,255,255,0.04)'; ctx.fillRect(20, y - 16, W - 40, 23); }
-      if (i === 3 || (i > 3 && (i - 3) % 3 === 0)) { ctx.strokeStyle = 'rgba(255,215,90,0.3)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(20, y - 17); ctx.lineTo(W - 20, y - 17); ctx.stroke(); }
-      this.text(ctx, r[0], cols[0], y, 14, r[5], 'left', false);
-      this.text(ctx, r[1], cols[1], y, 15, '#ffe9a0', 'left', false);
-      this.text(ctx, r[2], cols[2], y, 14, '#8cf', 'left', false);
-      this.text(ctx, r[3], cols[3], y, 14, '#6cf', 'left', false);
-      this.text(ctx, r[4], cols[4], y, 13, '#ccc', 'left', false);
-    });
-    this.text(ctx, '指令說明：「D → A」＝依序按 防禦、前方向（←或→）、攻擊。任何按鍵返回', W / 2, 524, 14, '#aaa');
-    this.hot.push({ x: 0, y: 0, w: W, h: H, fn: () => this.go(this.movesFrom) });
+    this.text(ctx, '招式表（共 35 招：共通 5 ＋ 必殺技 30）', W / 2, 34, 24, '#ffe27a');
+    const tabs = ['共通招式', ...CHARS.map(c => c.cls)], pg = this.mpage || 0;
+    tabs.forEach((t, i) => this.btn(ctx, 20 + i * 154, 48, 146, 34, t, i === pg, () => { this.mpage = i; SFX.play('select'); }, { size: 17 }));
+    if (pg === 0) {
+      UNIVERSAL_MOVES.forEach((m, i) => {
+        const y = 118 + i * 62; ctx.fillStyle = i % 2 ? 'rgba(255,255,255,0.03)' : 'rgba(255,255,255,0.07)'; ctx.fillRect(30, y - 26, W - 60, 56);
+        this.text(ctx, m.name, 50, y, 20, '#ffe9a0', 'left', false); this.text(ctx, m.input, 200, y, 17, '#8cf', 'left', false);
+        this.text(ctx, m.desc, 200, y + 22, 14, '#ccc', 'left', false);
+      });
+      this.text(ctx, '指令：「D → A」＝依序按 防禦、前方向（←或→，會轉向）、攻擊；觸控可直接點技能按鈕', W / 2, 438, 14, '#aaa');
+    } else {
+      const c = CHARS[pg - 1], f = this.previews[pg - 1];
+      ctx.fillStyle = 'rgba(255,255,255,0.05)'; roundRect(ctx, 24, 94, 190, 380, 10); ctx.fill();
+      f.x = 119; f.y = 300; f.face = 1; const s0 = f.scale; f.scale = 2; if (f.state !== 'attack' || f.t > 24) { f.state = 'attack'; f.t = 0; f.anim = { k: c.combo[(this.frame / 25 | 0) % 3], dur: 16 }; } drawFighter(ctx, f, 0, this.frame); f.scale = s0;
+      this.text(ctx, c.cls, 119, 340, 24, '#ffe27a'); this.text(ctx, c.name, 119, 364, 16, '#bbb');
+      this.text(ctx, `HP ${c.hp}　MP ${c.mp}`, 119, 392, 14, '#ddd');
+      wrapText(ctx, c.desc, 119, 420, 170, 18, 13, '#aaa');
+      c.specials.forEach((s, i) => {
+        const y = 122 + i * 58; ctx.fillStyle = i % 2 ? 'rgba(255,255,255,0.03)' : 'rgba(255,255,255,0.07)'; ctx.fillRect(228, y - 24, W - 252, 52);
+        this.text(ctx, s.name, 244, y, 19, '#ffe9a0', 'left', false); this.text(ctx, s.input, 400, y, 17, '#8cf', 'left', false);
+        this.text(ctx, 'MP ' + s.mp, 500, y, 15, '#6cf', 'left', false); if (i >= 3) this.text(ctx, 'NEW', 890, y, 12, '#f8a', 'left', false);
+        this.text(ctx, s.desc, 244, y + 21, 14, '#ccc', 'left', false);
+      });
+    }
+    this.btn(ctx, 20, 488, 120, 38, '← 返回', false, () => this.go(this.movesFrom), { size: 17 });
+    this.text(ctx, '← → 切換分頁　A / D 返回', W / 2, 514, 14, '#aaa');
   }
   drawControls(ctx) {
     ctx.fillStyle = '#0e1024'; ctx.fillRect(0, 0, W, H);
@@ -469,10 +485,11 @@ class Game {
     const L = [
       ['移動', '方向鍵 ← → ↑ ↓（↑↓ 為縱深移動）'], ['攻擊 A', 'A 或 Z　（連按三下＝三段連擊）'], ['跳躍 J', 'J、X 或 空白鍵'], ['防禦 D', 'D 或 C（按住防禦，正面攻擊大幅減傷）'],
       ['奔跑', '快速連按兩下 ← 或 →，按住持續奔跑'], ['衝刺攻擊', '奔跑中按 A'], ['跳躍攻擊', '跳躍中按 A'], ['必殺技', 'D → A、D ↑ A、D ↓ A、D → J、D ↑ J 等（依序輸入）'],
-      ['撿道具', '站在道具上按 A（回復類立即使用）'], ['投擲', '手持投擲道具按 A；手持武器時 奔跑中按 A 擲出'], ['暫停', 'P 或 Esc'], ['靜音', 'M 或右上角喇叭'],
+      ['抓投', '貼近暈眩／硬直敵人按 A 抓住 → A 毆打、方向＋A 摔出'], ['翻滾閃避', 'D ＋ ←／→、防禦中按 ←／→、或奔跑中按 D'],
+      ['撿道具／投擲', '站在道具上按 A；手持投擲物按 A、手持武器奔跑中按 A'], ['暫停／靜音', 'P 或 Esc／M 或右上角喇叭'],
     ];
-    L.forEach((r, i) => { const y = 96 + i * 32; this.text(ctx, r[0], 250, y, 18, '#8cf', 'right', false); this.text(ctx, r[1], 280, y, 17, '#fff', 'left', false); });
-    this.text(ctx, '手機：畫面下方的虛擬方向鍵與 A / J / D 按鈕。任何按鍵返回', W / 2, 500, 15, '#aaa');
+    L.forEach((r, i) => { const y = 92 + i * 31; this.text(ctx, r[0], 250, y, 18, '#8cf', 'right', false); this.text(ctx, r[1], 280, y, 17, '#fff', 'left', false); });
+    this.text(ctx, '手機：左側虛擬搖桿（推到底＝奔跑），右側 6 個技能鍵＋A／J／D／翻滾。任何按鍵返回', W / 2, 500, 15, '#aaa');
     this.hot.push({ x: 0, y: 0, w: W, h: H, fn: () => this.go(this.movesFrom) });
   }
   drawWorld(ctx) {
@@ -566,6 +583,11 @@ class Game {
     }
   }
 }
+function wrapText(ctx, str, x, y, maxW, lh, sz, col) {
+  ctx.font = font(sz, false); ctx.fillStyle = col; ctx.textAlign = 'center'; let line = '', yy = y;
+  for (const ch of str) { if (ctx.measureText(line + ch).width > maxW) { ctx.fillText(line, x, yy); line = ch; yy += lh; } else line += ch; }
+  if (line) ctx.fillText(line, x, yy);
+}
 function roundRect(ctx, x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
 function bar(ctx, x, y, w, h, v, col, label) {
   ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(x - 1, y - 1, w + 2, h + 2);
@@ -578,19 +600,72 @@ function drawLock(ctx, x, y) {
   ctx.fillStyle = '#999'; roundRect(ctx, x - 18, y - 10, 36, 28, 4); ctx.fill(); ctx.fillStyle = '#333'; ctx.fillRect(x - 3, y, 6, 10);
 }
 
-// ---------- 觸控按鈕 ----------
-function setupTouch() {
-  const wrap = document.getElementById('touch');
-  const want = ('ontouchstart' in window) || navigator.maxTouchPoints > 0 || new URLSearchParams(location.search).get('touch') === '1';
-  if (!want) return;
-  wrap.style.display = 'block';
-  wrap.querySelectorAll('[data-k]').forEach(b => {
-    const k = b.dataset.k;
-    const on = e => { e.preventDefault(); SFX.init(); b.classList.add('on'); Input.down(k); };
-    const off = e => { e.preventDefault(); b.classList.remove('on'); Input.up(k); };
-    b.addEventListener('pointerdown', on); b.addEventListener('pointerup', off); b.addEventListener('pointercancel', off); b.addEventListener('pointerleave', off);
-  });
-}
+// ---------- 觸控操作：浮動搖桿＋技能鍵 ----------
+const Touch = {
+  on: false, built: -1, skillBtns: [],
+  setup() {
+    const wrap = document.getElementById('touch');
+    const want = ('ontouchstart' in window) || navigator.maxTouchPoints > 0 || new URLSearchParams(location.search).get('touch') === '1';
+    if (!want) return;
+    this.on = true; document.body.classList.add('touch'); wrap.style.display = 'block';
+    // 動作鍵（多點觸控：每個按鈕獨立追蹤自己的 pointer）
+    wrap.querySelectorAll('[data-k]').forEach(b => {
+      const k = b.dataset.k; const ids = new Set();
+      const on = e => { e.preventDefault(); SFX.init(); ids.add(e.pointerId); try { b.setPointerCapture(e.pointerId); } catch (_) {} b.classList.add('on'); Input.down(k, true); };
+      const off = e => { e.preventDefault(); ids.delete(e.pointerId); if (!ids.size) { b.classList.remove('on'); Input.up(k); } };
+      b.addEventListener('pointerdown', on); b.addEventListener('pointerup', off); b.addEventListener('pointercancel', off);
+      b.addEventListener('contextmenu', e => e.preventDefault());
+    });
+    // 搖桿
+    const zone = document.getElementById('joy'), base = document.getElementById('joyBase'), knob = document.getElementById('joyKnob');
+    const J = Input.joy; J.dirs = { left: false, right: false, up: false, down: false };
+    const R = () => base.offsetWidth * 0.5;
+    const setDirs = (want) => { for (const k of ['left', 'right', 'up', 'down']) { if (want[k] && !J.dirs[k]) Input.down(k, true); if (!want[k] && J.dirs[k]) Input.up(k); J.dirs[k] = want[k]; } };
+    const place = (x, y) => { const r = zone.getBoundingClientRect(); base.style.left = (x - r.left) + 'px'; base.style.top = (y - r.top) + 'px'; };
+    const move = (x, y) => {
+      const r = R(); let dx = x - J.bx, dy = y - J.by; const m = Math.hypot(dx, dy);
+      if (m > r) { dx *= r / m; dy *= r / m; }
+      knob.style.transform = `translate(${dx}px, ${dy}px)`;
+      const n = Math.min(1, m / r), want = { left: false, right: false, up: false, down: false };
+      if (n > 0.25) {
+        const sec = ((Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) % 8) + 8) % 8; // 0=右 2=下 4=左 6=上
+        if (sec === 7 || sec === 0 || sec === 1) want.right = true;
+        if (sec === 3 || sec === 4 || sec === 5) want.left = true;
+        if (sec === 1 || sec === 2 || sec === 3) want.down = true;
+        if (sec === 5 || sec === 6 || sec === 7) want.up = true;
+      }
+      setDirs(want);
+      J.run = Math.abs(dx) >= r * 0.85 ? Math.sign(dx) : 0; J.nx = dx / r; J.ny = dy / r;
+    };
+    const end = e => { if (e.pointerId !== J.id) return; J.active = false; J.id = null; J.run = 0; setDirs({}); knob.style.transform = ''; base.classList.add('idle'); base.style.left = base.style.top = ''; };
+    zone.addEventListener('pointerdown', e => { e.preventDefault(); SFX.init(); if (J.active) return; J.active = true; J.id = e.pointerId; try { zone.setPointerCapture(e.pointerId); } catch (_) {} J.bx = e.clientX; J.by = e.clientY; base.classList.remove('idle'); place(e.clientX, e.clientY); move(e.clientX, e.clientY); });
+    zone.addEventListener('pointermove', e => { if (e.pointerId === J.id) { e.preventDefault(); move(e.clientX, e.clientY); } });
+    zone.addEventListener('pointerup', end); zone.addEventListener('pointercancel', end);
+    document.getElementById('rotate').addEventListener('click', e => e.currentTarget.classList.add('hide'));
+  },
+  buildSkills(ci) {
+    const box = document.getElementById('skills'); box.innerHTML = ''; this.skillBtns = [];
+    const arrow = { f: '→', u: '↑', d: '↓' };
+    CHARS[ci].specials.forEach(s => {
+      const b = document.createElement('button'); b.className = 'sk sk-' + s.cmd;
+      b.innerHTML = `<b>${s.short}</b><i>${arrow[s.cmd[1]]}${s.cmd[2]}·${s.mp}</i>`; b.title = s.name;
+      const ids = new Set();
+      b.addEventListener('pointerdown', e => { e.preventDefault(); SFX.init(); ids.add(e.pointerId); b.classList.add('on'); Input.skillQ = { cmd: s.cmd, f: Input.frame }; });
+      const off = e => { ids.delete(e.pointerId); if (!ids.size) b.classList.remove('on'); };
+      b.addEventListener('pointerup', off); b.addEventListener('pointercancel', off); b.addEventListener('contextmenu', e => e.preventDefault());
+      box.appendChild(b); this.skillBtns.push({ b, s });
+    });
+    this.built = ci;
+  },
+  tick(g) {
+    if (!this.on) return;
+    const playing = g.screen === 'play' || g.screen === 'intro';
+    if (document.body.classList.contains('playing') !== playing) { document.body.classList.toggle('playing', playing); if (!playing) { Input.held = {}; } }
+    if (!playing || !g.player) return;
+    if (this.built !== g.player.ci) this.buildSkills(g.player.ci);
+    if (g.frame % 6 === 0) for (const { b, s } of this.skillBtns) b.classList.toggle('dim', g.player.mp < s.mp);
+  },
+};
 
 // ---------- 啟動 ----------
 let game;
@@ -598,13 +673,13 @@ function boot() {
   const cv = document.getElementById('game');
   game = new Game(cv); window.SMB = game;
   const fit = () => { const s = Math.min(window.innerWidth / W, window.innerHeight / H); cv.style.width = Math.floor(W * s) + 'px'; cv.style.height = Math.floor(H * s) + 'px'; };
-  window.addEventListener('resize', fit); fit(); setupTouch();
+  window.addEventListener('resize', fit); fit(); Touch.setup();
   let last = performance.now(), acc = 0;
   function loop(now) {
     acc += Math.min(100, now - last); last = now;
     let n = 0;
     while (acc >= 1000 / 60 && n < 5) { try { game.step(); } catch (e) { console.error(e); } acc -= 1000 / 60; n++; }
-    try { game.draw(); } catch (e) { console.error(e); }
+    try { game.draw(); Touch.tick(game); } catch (e) { console.error(e); }
     requestAnimationFrame(loop);
   }
   requestAnimationFrame(loop);

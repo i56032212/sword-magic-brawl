@@ -1,16 +1,33 @@
 html, body { margin: 0; height: 100%; background: #07070f; overflow: hidden; touch-action: none; -webkit-user-select: none; user-select: none; }
 #stage { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
 #game { display: block; background: #000; image-rendering: auto; outline: none; box-shadow: 0 0 40px rgba(80,120,255,0.25); }
-#touch { display: none; position: fixed; inset: 0; pointer-events: none; }
-#touch button { pointer-events: auto; position: absolute; border: 2px solid rgba(255,255,255,0.5); background: rgba(20,24,50,0.45); color: #fff; font: bold 20px sans-serif; border-radius: 50%; touch-action: none; -webkit-tap-highlight-color: transparent; }
-#touch button.on { background: rgba(255,215,90,0.6); }
-#touch button small { display: block; font-size: 10px; font-weight: normal; }
-.pad { position: absolute; left: 16px; bottom: 16px; width: 168px; height: 168px; }
-.pad button { width: 56px; height: 56px; }
-.pad .u { left: 56px; top: 0; } .pad .d { left: 56px; bottom: 0; } .pad .l { left: 0; top: 56px; } .pad .r { right: 0; top: 56px; }
-.acts { position: absolute; right: 16px; bottom: 16px; width: 210px; height: 170px; }
-.acts button { width: 64px; height: 64px; }
-.acts .ba { right: 0; bottom: 40px; background: rgba(200,60,60,0.5); }
-.acts .bj { right: 72px; bottom: 0; background: rgba(60,160,60,0.5); }
-.acts .bd { right: 144px; bottom: 40px; background: rgba(60,100,200,0.5); }
-.acts .bp { right: 20px; top: -40px; width: 44px; height: 44px; font-size: 14px; }
+#touch { display: none; position: fixed; inset: 0; pointer-events: none; z-index: 5; }
+#touch .ctl { display: none; }
+body.playing #touch .ctl { display: block; }
+#touch button { pointer-events: auto; position: absolute; border: 2px solid rgba(255,255,255,0.55); color: #fff; font: bold 5vmin sans-serif; border-radius: 50%; touch-action: none; -webkit-tap-highlight-color: transparent; -webkit-user-select: none; user-select: none; padding: 0; line-height: 1.05; }
+#touch button.on { background: rgba(255,215,90,0.7) !important; transform: scale(0.94); }
+#touch button small { display: block; font-size: 2.6vmin; font-weight: normal; }
+/* 浮動搖桿 */
+#joy { position: absolute; left: 0; top: 16%; width: 40%; bottom: 0; pointer-events: auto; touch-action: none; }
+#joyBase { position: absolute; width: 30vmin; height: 30vmin; margin: -15vmin 0 0 -15vmin; border-radius: 50%; border: 2px solid rgba(255,255,255,0.5); background: radial-gradient(rgba(40,50,90,0.15), rgba(40,50,90,0.45)); }
+#joyBase.idle { left: 20vmin; top: calc(100% - 20vmin); opacity: 0.4; }
+#joyKnob { position: absolute; left: 50%; top: 50%; width: 13vmin; height: 13vmin; margin: -6.5vmin 0 0 -6.5vmin; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #fff, #9ab 60%, #567); box-shadow: 0 0 10px rgba(0,0,0,0.5); }
+/* 右側按鈕 */
+#acts { position: absolute; right: 1.5vmin; bottom: 1.5vmin; width: 35vmin; height: 35vmin; }
+#acts button { width: 16.5vmin; height: 16.5vmin; }
+#acts .ba { right: 0; bottom: 0; background: rgba(200,60,60,0.55); }
+#acts .bj { right: 18.5vmin; bottom: 0; background: rgba(60,160,60,0.55); }
+#acts .bd { right: 18.5vmin; bottom: 18.5vmin; background: rgba(60,100,200,0.55); }
+#acts .br { right: 0; bottom: 18.5vmin; background: rgba(150,90,200,0.55); }
+#skills { position: absolute; right: 1.5vmin; bottom: 38.5vmin; width: 39vmin; height: 26vmin; }
+#skills .sk { position: relative; float: right; margin: 0 0 1.5vmin 1.5vmin; width: 11.5vmin; height: 11.5vmin; border-radius: 22%; background: rgba(30,36,70,0.62); font-size: 3.6vmin; }
+#skills .sk b { display: block; font-weight: bold; }
+#skills .sk i { display: block; font-style: normal; font-size: 2.3vmin; color: #9cf; }
+#skills .sk-DfA { border-color: rgba(255,140,90,0.8); } #skills .sk-DuA { border-color: rgba(255,230,110,0.8); } #skills .sk-DdA { border-color: rgba(130,220,255,0.8); }
+#skills .sk-DfJ { border-color: rgba(255,120,200,0.8); } #skills .sk-DuJ { border-color: rgba(160,255,140,0.8); } #skills .sk-DdJ { border-color: rgba(190,150,255,0.8); }
+#skills .sk.dim { opacity: 0.35; filter: grayscale(1); }
+/* 直向提示 */
+#rotate { display: none; position: fixed; inset: 0; z-index: 10; background: rgba(5,6,20,0.88); color: #fff; font: bold 20px sans-serif; text-align: center; align-items: center; justify-content: center; padding: 20px; }
+#rotate .ico { font-size: 56px; margin-bottom: 12px; }
+#rotate small { font-weight: normal; color: #aaa; }
+@media (orientation: portrait) { body.touch #rotate:not(.hide) { display: flex; } }

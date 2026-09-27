@@ -1,7 +1,7 @@
 'use strict';
 // ===== 戰鬥核心：角色狀態機、招式、飛行道具 =====
 let UID = 1;
-function emptyIntent() { return { mx: 0, my: 0, atk: false, jmp: false, def: false, run: false, special: null, sdir: 0 }; }
+function emptyIntent() { return { mx: 0, my: 0, atk: false, jmp: false, def: false, run: false, special: null, sdir: 0, dpress: 0, defPress: false, roll: false, noRun: false }; }
 const NEUTRAL = { idle: 1, walk: 1 };
 
 class Fighter {
@@ -22,7 +22,49 @@ class Fighter {
     this.move = null; this.moveId = null; this.mv = {}; this.anim = null; this.swing = 0; this.swingUsed = -1;
     this.status = { frozen: 0, burn: 0, poison: 0 }; this.flash = 0; this.remove = false; this.hidden = false;
     this.ai = null; this.bounced = false;
+    this.buffs = { power: 0, shield: 0 }; this.shieldHp = 0; this.stealth = 0; this.rollPend = null;
+    this.grabbed = null; this.grabber = null; this.grabT = 0; this.punches = 0; this.punchT = 0; this.thrownBy = null; this.thrownHit = null;
+    this.isClone = false; this.life = 0; this.owner = null;
   }
+  spd() { return this.speed * (this.buffs.power > 0 ? 1.15 : 1); }
+  startRoll(dir) {
+    this.face = dir || this.face; this.setState('roll'); this.vx = this.face * this.spd() * 2.5; this.vy = 0;
+    this.invuln = Math.max(this.invuln, 17); this.rollPend = null; SFX.play('dash');
+    addParticle({ type: 'dust', x: this.x, y: this.y, z: 2, life: 18, r: 8 });
+  }
+  grabTarget(g) {
+    const I = this.intent;
+    for (const t of g.fighters) {
+      if (t.team === this.team || !t.alive || t.z > 1 || t.state === 'grabbed' || t.invuln > 0) continue;
+      const dx = (t.x - this.x) * this.face, dy = Math.abs(t.y - this.y);
+      if (dx < -4 || dy > 14) continue;
+      const stunned = t.state === 'dizzy' || t.state === 'hurt';
+      if ((stunned && dx <= 44) || (!t.isBoss && I.mx === this.face && dx <= 30 && (t.state === 'idle' || t.state === 'walk'))) return t;
+    }
+    return null;
+  }
+  startGrab(g, t) {
+    this.setState('grab'); this.grabbed = t; this.grabT = 110; this.punches = 0; this.punchT = 0; this.anim = { k: 'grabhold', dur: 10 };
+    t.setState('grabbed'); t.grabber = this; t.face = -this.face; t.vx = t.vy = 0; t.status.frozen = 0;
+    SFX.play('pickup'); g.floatText(this, '抓住！', '#ffd75a', 16);
+    if (this.team === 0) g.stats.grabs = (g.stats.grabs || 0) + 1;
+  }
+  grabDamage(g, dmg) {
+    const v = this.grabbed; const d = dmg * this.power * (this.buffs.power > 0 ? 1.35 : 1) / v.defense;
+    v.hp -= d; v.flash = 8; g.floatText(v, Math.round(d) + '', v.team === 0 ? '#ff6060' : '#fff', 15);
+    addParticle({ type: 'spark', x: v.x, y: v.y, z: 44 * v.scale, life: 10, color: '#fff6a0' }); SFX.play('hit');
+    if (this.team === 0) g.addScore(Math.round(d));
+  }
+  throwGrabbed(g, dir) {
+    const v = this.grabbed; if (!v) return;
+    this.grabbed = null; v.grabber = null; this.face = dir || this.face;
+    this.grabDamage2(g, v, 10);
+    knockDown(v, this.face, { launch: 7, knock: 8.5 }); v.thrownBy = this; v.thrownHit = new Set([v.id]);
+    this.anim = { k: 'throw', dur: 12 }; this.setState('throw'); this.throwItem = null;
+    SFX.play('heavy'); g.floatText(this, '摔投！', '#ffd75a', 18);
+    if (this.team === 0) g.stats.throwsBody = (g.stats.throwsBody || 0) + 1;
+  }
+  grabDamage2(g, v, dmg) { const d = dmg * this.power / v.defense; v.hp -= d; v.flash = 8; g.floatText(v, Math.round(d) + '', '#fff', 15); if (this.team === 0) g.addScore(Math.round(d)); }
   get w() { return (this.look.type === 'wolf' ? 44 : 28) * this.scale; }
   get h() { return (this.look.type === 'wolf' ? 36 : 64) * this.scale; }
   get alive() { return this.state !== 'dead' && this.hp > 0; }
@@ -35,6 +77,10 @@ class Fighter {
     if (this.invuln > 0) this.invuln--;
     if (this.flash > 0) this.flash--;
     if (this.armor > 0) this.armor--;
+    if (this.buffs.power > 0) { this.buffs.power--; if (g.frame % 4 === 0) addParticle({ type: 'flame', x: this.x + (Math.random() - 0.5) * 26, y: this.y + 1, z: Math.random() * 60 * this.scale, vz: 1.4, life: 16, color: '#ff4040' }); }
+    if (this.buffs.shield > 0) { this.buffs.shield--; if (this.buffs.shield === 0) this.shieldHp = 0; }
+    if (this.stealth > 0) this.stealth--;
+    if (this.isClone && --this.life <= 0) { this.remove = true; addParticle({ type: 'smoke', x: this.x, y: this.y, z: 30, life: 25, r: 20, color: '#222' }); return; }
     this.stagger = Math.max(0, this.stagger - 0.7);
     this.guard = Math.max(0, this.guard - 0.5);
     const st = this.status;
@@ -47,6 +93,23 @@ class Fighter {
     switch (this.state) {
       case 'idle': case 'walk': this.neutral(g, I); break;
       case 'run': this.stRun(g, I); break;
+      case 'roll': this.vy = 0; this.vx *= 0.955; if (this.t >= 22) this.setState('idle'); break;
+      case 'dizzy': this.vx *= 0.8; this.vy = 0; if (this.t >= this.hitstun) this.setState('idle'); break;
+      case 'grab': {
+        const v = this.grabbed; this.vx = this.vy = 0;
+        if (!v || v.state !== 'grabbed' || v.grabber !== this) { this.grabbed = null; this.setState('idle'); break; }
+        v.x = this.x + this.face * 30 * this.scale; v.y = this.y; v.z = 0; v.face = -this.face;
+        if (this.punchT > 0) this.punchT--; else this.anim = { k: 'grabhold', dur: 10 };
+        if (--this.grabT <= 0) { v.grabber = null; v.setState('idle'); v.invuln = 20; this.grabbed = null; this.setState('idle'); break; }
+        if (I.atk && this.punchT <= 2) {
+          if (I.mx || this.punches >= 5 || v.hp <= 0) this.throwGrabbed(g, I.mx || this.face);
+          else { this.punches++; this.punchT = 10; this.anim = { k: 'punch', dur: 8 }; this.t = 0; this.grabDamage(g, 5); if (v.hp <= 0) this.throwGrabbed(g, this.face); }
+        }
+        break; }
+      case 'grabbed': this.vx = this.vy = 0;
+        if (!this.grabber || this.grabber.state !== 'grab' || this.grabber.grabbed !== this) { this.grabber = null; this.setState('idle'); break; }
+        if (I.atk || I.jmp) this.grabber.grabT -= 8;
+        break;
       case 'jump': if (I.atk) { if (this.held && ITEMS[this.held.type].cat === 'throw') this.startThrow(g); else { this.swing++; this.anim = { k: 'jumpatk', dur: 16 }; this.state = 'jumpatk'; this.t = 0; this.hitIds.clear(); SFX.play('swing'); } } break;
       case 'jumpatk': {
         if (this.t >= 3 && this.t <= 16) { const w = this.weapon();
@@ -62,11 +125,21 @@ class Fighter {
         break; }
       case 'defend': this.vx *= 0.7; this.vy = 0;
         if (I.special && this.trySpecial(g, I.special, I.sdir)) break;
-        if (!I.def && this.t > 6) this.setState('idle');
+        if (I.roll) { this.startRoll(I.mx || this.face); break; }
+        if (I.dpress) this.rollPend = { dir: I.dpress, t: this.t, hold: false };
+        if (this.rollPend && this.t - this.rollPend.t >= 8) { const r = this.rollPend; this.rollPend = null; if (!r.hold || I.mx === r.dir) { this.startRoll(r.dir); break; } }
+        if (!I.def && this.t > 6 && !this.rollPend) this.setState('idle');
         break;
       case 'blockstun': this.vx *= 0.8; if (this.t >= 10) this.setState(I.def ? 'defend' : 'idle'); break;
       case 'hurt': this.vx *= 0.85; this.vy = 0; if (this.t >= this.hitstun) this.setState('idle'); break;
-      case 'fall': break;
+      case 'fall':
+        if (this.thrownBy && Math.abs(this.vx) > 2.5) for (const o of g.fighters) {
+          if (o === this || o.team === this.thrownBy.team || this.thrownHit.has(o.id) || !o.alive) continue;
+          if (Math.abs(o.x - this.x) < (o.w + this.w) * 0.5 && Math.abs(o.y - this.y) < 22 && this.z < o.h) {
+            this.thrownHit.add(o.id); hitFighter(g, this.thrownBy, o, { dmg: 14, kd: true, knock: 5, launch: 5 }, this.vx > 0 ? 1 : -1);
+          }
+        }
+        break;
       case 'down': this.vx *= 0.8; this.vy = 0; if (this.t >= (this.kind === 'char' ? 34 : 44)) { this.setState('getup'); } break;
       case 'getup': this.invuln = Math.max(this.invuln, 2); if (this.t >= 14) { this.setState('idle'); this.invuln = 30; } break;
       case 'dead': this.vx *= 0.85; this.vy = 0; if (this.t > 80 && this.team !== 0) this.remove = true; break;
@@ -86,11 +159,12 @@ class Fighter {
   atkBase() { return this.def.atkBase || this.def.dmg || 6; }
   neutral(g, I) {
     if (I.special && this.trySpecial(g, I.special, I.sdir)) return;
-    if (I.def) { this.setState('defend'); this.vx = this.vy = 0; return; }
+    if (I.roll) { this.startRoll(I.mx || this.face); return; }
+    if (I.def) { this.setState('defend'); this.vx = this.vy = 0; if (I.mx && I.defPress) this.rollPend = { dir: I.mx, t: 0, hold: true }; return; }
     if (I.atk) { this.doAttack(g); return; }
     if (I.jmp) { this.jump(g, I.mx, I.my, false); return; }
     if (I.run && I.mx) { this.face = I.mx; this.setState('run'); SFX.play('dash'); return; }
-    this.vx = I.mx * this.speed; this.vy = I.my * this.speed * 0.55;
+    this.vx = I.mx * this.spd(); this.vy = I.my * this.spd() * 0.55;
     if (I.mx) this.face = I.mx;
     const moving = I.mx || I.my;
     if (moving && this.state !== 'walk') this.state = 'walk';
@@ -105,9 +179,9 @@ class Fighter {
       this.swing++; this.anim = { k: 'dash', dur: 20 }; this.setState('dashatk'); this.vx = this.face * this.speed * 2.3; SFX.play('swing'); return;
     }
     if (I.jmp) { this.jump(g, this.face, I.my, true); return; }
-    if (I.def) { this.setState('defend'); this.vx *= 0.3; return; }
-    if (I.mx !== this.face) { this.setState('land'); this.vx = this.face * 2; return; }
-    this.vx = this.face * this.speed * 1.9; this.vy = I.my * this.speed * 0.4;
+    if (I.def || I.defPress || I.roll) { this.startRoll(this.face); return; }
+    if (I.mx !== this.face || I.noRun) { this.setState('land'); this.vx = this.face * 2; return; }
+    this.vx = this.face * this.spd() * 1.9; this.vy = I.my * this.spd() * 0.4;
     if (this.t % 7 === 0) addParticle({ type: 'dust', x: this.x - this.face * 10, y: this.y, z: 2, vx: -this.face * 0.5, vz: 0.4, life: 20, r: 5 });
   }
   jump(g, mx, my, dash) {
@@ -118,6 +192,7 @@ class Fighter {
   doAttack(g) {
     const it = g.itemUnder(this);
     if (it && (ITEMS[it.type].cat === 'heal' || !this.held)) { this.pickup(g, it); return; }
+    const gt = this.grabTarget(g); if (gt) { this.startGrab(g, gt); return; }
     if (this.held && ITEMS[this.held.type].cat === 'throw') { this.startThrow(g); return; }
     this.startCombo(g, 0);
   }
@@ -161,12 +236,13 @@ class Fighter {
     if (this.kind !== 'char') return false;
     const sp = this.def.specials.find(s => s.cmd === cmd);
     if (!sp) return false;
-    if (this.mp < sp.mp && !(g.debugInfMp && this.team === 0)) { if (this.team === 0) g.floatText(this, '魔力不足', '#6cf'); return false; }
+    if (this.mp < sp.mp && !(g.debugInfMp && this.team === 0)) { if (this.team === 0) { if (!Input.skillQ || Input.skillQ.warned !== true) g.floatText(this, '魔力不足', '#6cf'); if (Input.skillQ) Input.skillQ = null; } return false; }
     if (sdir) this.face = sdir;
     if (!(g.debugInfMp && this.team === 0)) this.mp -= sp.mp;
     this.startMove(g, sp.id);
     g.floatText(this, sp.name, this.team === 0 ? '#ffe36a' : '#ff8aa0', 20);
-    g.stats.specials[sp.id] = (g.stats.specials[sp.id] || 0) + 1;
+    if (this.team === 0 && !this.isClone) { g.stats.specials[sp.id] = (g.stats.specials[sp.id] || 0) + 1; if (Input.skillQ) Input.skillQ = null; }
+    else if (this.isBoss) g.stats.bossSpecials[sp.id] = (g.stats.bossSpecials[sp.id] || 0) + 1;
     return true;
   }
   startMove(g, id) {
@@ -241,6 +317,8 @@ class Fighter {
       case 'jump': case 'jumpatk': this.setState('land'); this.vx = 0; this.vy = 0; SFX.play('land'); break;
       case 'throw': this.vx = 0; break;
       case 'fall':
+        if (this.thrownBy && !this.bounced) { this.thrownBy.team === 0 && g.addScore(20); }
+        this.thrownBy = null;
         if (v < -5 && !this.bounced) { this.bounced = true; this.vz = 3.2; this.z = 0.1; this.vx *= 0.5; addParticle({ type: 'dust', x: this.x, y: this.y, z: 0, life: 25, r: 14 }); g.shake = Math.max(g.shake, 4); SFX.play('land'); }
         else { this.vx *= 0.3; if (this.hp <= 0) { this.setState('dead'); g.onDeath(this); } else this.setState('down'); }
         break;
@@ -253,13 +331,28 @@ class Fighter {
 function knockDown(t, dir, h) {
   t.setState('fall'); t.stagger = 0; t.vz = Math.max(h.launch || 0, 5); t.z = Math.max(t.z, 0.5);
   t.vx = dir * Math.max(h.knock || 3, 3); t.vy = 0; t.bounced = false; t.face = -dir; t.hidden = false; t.armor = 0;
+  if (t.grabbed) { const v = t.grabbed; t.grabbed = null; v.grabber = null; if (v.state === 'grabbed') v.setState('idle'); }
 }
 
 // 命中判定核心
 function hitFighter(g, att, t, h, dir) {
-  if (t.invuln > 0 || t.state === 'down' || t.state === 'getup' || t.state === 'dead' || t.hp <= 0 && t.state === 'fall') return false;
-  const pw = att ? att.power : 1;
+  if (t.invuln > 0 || t.state === 'roll' && t.t < 18 || t.state === 'down' || t.state === 'getup' || t.state === 'dead' || t.hp <= 0 && t.state === 'fall') return false;
+  if (t.state === 'special' && t.moveId === 'counter' && t.mv.stance && !t.mv.countered) {
+    t.mv.countered = true; t.mv.cAt = t.t; t.face = -dir; t.invuln = 26; t.vx = 0;
+    addParticle({ type: 'spark', x: t.x - dir * 14, y: t.y, z: 44 * t.scale, life: 14, color: '#9ef' }); SFX.play('block'); g.floatText(t, '燕返！', '#9ef', 20);
+    return true;
+  }
+  const pw = att ? att.power * (att.buffs && att.buffs.power > 0 ? 1.35 : 1) : 1;
   let dmg = h.dmg * pw / t.defense;
+  if (t.buffs.shield > 0) {
+    const ab = dmg * 0.7; dmg -= ab; t.shieldHp -= ab; t.hp -= dmg; t.flash = 6;
+    addParticle({ type: 'ring', x: t.x, y: t.y, z: 30, r0: 20, r1: 40, life: 10, color: '#8cf' }); SFX.play('block');
+    g.floatText(t, Math.max(1, Math.round(dmg)) + '', '#8cf', 14);
+    if (t.shieldHp <= 0) { t.buffs.shield = 0; g.floatText(t, '護盾破碎', '#8cf', 16); for (let i = 0; i < 8; i++) addParticle({ type: 'shard', x: t.x, y: t.y, z: 40, vx: (Math.random() - 0.5) * 6, vz: Math.random() * 4, grav: 0.3, life: 30, color: '#8cf' }); }
+    if (att && att.team === 0) g.addScore(Math.round(dmg));
+    if (t.hp <= 0) { knockDown(t, dir, h); }
+    return true;
+  }
   const facing = t.face === -dir;
   if ((t.state === 'defend' || t.state === 'blockstun') && facing && !h.unblockable) {
     dmg *= 0.1; t.hp = Math.max(1, t.hp - dmg); t.guard += (h.stagger || 34) * 0.8; t.vx = dir * 3;
@@ -269,7 +362,7 @@ function hitFighter(g, att, t, h, dir) {
     return true;
   }
   t.hp -= dmg; t.flash = 10;
-  if (att) { if (att.maxMp) att.mp = Math.min(att.maxMp, att.mp + 1.5); if (att.team === 0) g.addScore(Math.round(dmg)); }
+  if (att) { if (att.maxMp) att.mp = Math.min(att.maxMp, att.mp + 1.0); if (att.team === 0) g.addScore(Math.round(dmg)); }
   g.hitstop = Math.max(g.hitstop, h.kd ? 5 : 3);
   if (h.burn) t.status.burn = 120;
   if (h.poison) t.status.poison = 200;
@@ -281,6 +374,7 @@ function hitFighter(g, att, t, h, dir) {
     for (let i = 0; i < 6; i++) addParticle({ type: 'shard', x: t.x, y: t.y, z: t.z + 30, vx: (Math.random() - 0.5) * 4, vz: Math.random() * 4, grav: 0.3, life: 30 });
     return true;
   }
+  if (h.dizzy && t.hp > 0) { t.setState('dizzy'); t.hitstun = Math.round(h.dizzy * (t.isBoss ? 0.5 : 1)); t.vx = 0; t.vy = 0; return true; }
   if (t.armor > 0 && t.hp > 0) return true;
   t.stagger += h.stagger || 34;
   const thresh = t.def.heavy ? 150 : t.isBoss ? 120 : 100;
@@ -294,10 +388,10 @@ function hitFighter(g, att, t, h, dir) {
   return true;
 }
 
-function explode(g, p, owner) {
-  addParticle({ type: 'explosion', x: p.x, y: p.y, z: 10, life: 24, r: 80 });
+function explode(g, p, owner, dmg = 16, r = 80) {
+  addParticle({ type: 'explosion', x: p.x, y: p.y, z: 10, life: 24, r });
   for (let i = 0; i < 14; i++) addParticle({ type: 'flame', x: p.x + (Math.random() - 0.5) * 90, y: p.y + (Math.random() - 0.5) * 40, z: Math.random() * 20, vz: 1 + Math.random(), life: 20 + Math.random() * 20 });
-  g.aoe(owner, p.team, p.x, p.y, 80, 36, { id: 'boom' + p.id, dmg: 16, kd: true, knock: 4, launch: 6, burn: true });
+  g.aoe(owner, p.team, p.x, p.y, r, r * 0.45, { id: 'boom' + p.id, dmg, kd: true, knock: 4, launch: 6, burn: true });
   g.shake = Math.max(g.shake, 8); SFX.play('boom');
 }
 
@@ -319,6 +413,7 @@ class Proj {
     }
     if (--this.life <= 0) { this.dead = true; if (this.onExpire) this.onExpire(g, this); return; }
     if (this.y < GROUND_TOP - 30 || this.y > GROUND_BOT + 30) { this.dead = true; return; }
+    if (this.ghost) return;
     const dir = this.dir || (this.vx >= 0 ? 1 : -1);
     for (const t of g.fighters) {
       if (t.team === this.team || this.hitSet.has(t.id) || !t.alive && t.state !== 'fall') continue;
@@ -436,7 +531,7 @@ const MOVES = {
   heal: { anim: 'heal', animDur: 10,
     start(f) { SFX.play('heal'); },
     update(f, g) {
-      if (f.t >= 5 && f.t < 45) { f.hp = Math.min(f.maxHp, f.hp + f.maxHp * 0.34 / 40); if (f.t % 3 === 0) addParticle({ type: 'heal', x: f.x + (Math.random() - 0.5) * 40, y: f.y + 1, z: Math.random() * 20, vz: 1.5, life: 30 }); }
+      if (f.t >= 5 && f.t < 45) { f.hp = Math.min(f.maxHp, f.hp + f.maxHp * 0.30 / 40); if (f.t % 3 === 0) addParticle({ type: 'heal', x: f.x + (Math.random() - 0.5) * 40, y: f.y + 1, z: Math.random() * 20, vz: 1.5, life: 30 }); }
       if (f.t === 6) { addParticle({ type: 'ring', x: f.x, y: f.y, z: 0, r0: 10, r1: 70, life: 30, color: '#fff27a' }); g.floatText(f, '治癒', '#9f9'); }
       return f.t < 50; } },
   // --- 刺客 ---
@@ -467,6 +562,122 @@ const MOVES = {
     update(f, g) {
       if (f.t === 6 || f.t === 12 || f.t === 18) { g.projs.push(new Proj({ type: 'kunai', x: f.x + f.face * 24, y: f.y, z: 40 * f.scale, vx: f.face * 13, team: f.team, owner: f, dmg: 8, stagger: 30, hitstun: 14, poison: true, r: 10, life: 55 })); SFX.play('throw'); }
       return f.t < 30; } },
+  // ===== 新增必殺技 =====
+  quake: { anim: 'raise', animDur: 20,
+    update(f, g) {
+      if (f.t === 12) {
+        const ox = f.x, oy = f.y, face = f.face, team = f.team; SFX.play('heavy'); g.shake = Math.max(g.shake, 5);
+        g.projs.push(new Proj({ type: 'spawner', x: ox, y: oy, z: 0, team, owner: f, life: 34, onTick: (gg, p) => {
+          if (p.t % 5 === 1) { const i = (p.t - 1) / 5, x = ox + face * (58 + i * 54);
+            addParticle({ type: 'spike', x, y: oy, z: 0, life: 22, seed: i }); for (let k = 0; k < 3; k++) addParticle({ type: 'shard', x, y: oy, z: 10, vx: (Math.random() - 0.5) * 4, vz: 3 + Math.random() * 3, grav: 0.35, life: 26, color: '#8a6a4a' });
+            gg.aoe(f, team, x, oy, 38, 24, { dmg: 11, kd: true, launch: 8, knock: 2 }); SFX.play('land'); } } }));
+      }
+      return f.t < 30; } },
+  soul: { anim: 'castup', animDur: 16,
+    update(f, g) {
+      if (f.t === 10) { f.buffs.power = 480; SFX.play('magic'); SFX.play('heal'); addParticle({ type: 'ring', x: f.x, y: f.y, z: 0, r0: 10, r1: 90, life: 24, color: '#ff5050' }); g.floatText(f, '攻擊力上升！', '#ff7070', 16); }
+      return f.t < 24; } },
+  counter: { anim: 'defend', animDur: 10,
+    start(f) { f.mv.stance = true; },
+    update(f, g) {
+      if (!f.mv.countered) { f.anim = { k: 'guardstance', dur: 10 }; if (f.t > 44) { f.mv.stance = false; return false; } return true; }
+      const ct = f.t - f.mv.cAt; f.mv.stance = false;
+      if (ct === 1) { f.anim = { k: 'slash2', dur: 12 }; f.vx = f.face * 5; SFX.play('swing'); addParticle({ type: 'slashfx', x: f.x + f.face * 30, y: f.y, z: 40, r: 50, a0: -2.2, a1: 1.2, life: 10, color: '#9ef' }); }
+      if (ct >= 2 && ct <= 8) g.hit(f, HB(f, { id: 'ctr', fx0: -10, fx1: 72, dy: 26, dmg: 30, kd: true, knock: 7, launch: 7, unblockable: true }));
+      f.vx *= 0.85;
+      return ct < 20; } },
+  blink: { anim: 'cast', animDur: 10,
+    start(f, g) {
+      f.invuln = 14; f.hidden = true; SFX.play('magic');
+      const ox = f.x, oy = f.y, team = f.team;
+      addParticle({ type: 'ring', x: ox, y: oy, z: 0, r0: 40, r1: 44, life: 34, color: '#c07aff' });
+      g.projs.push(new Proj({ type: 'spawner', x: ox, y: oy, z: 0, team, owner: f, life: 32, onTick: (gg, p) => {
+        if (p.t === 30) { addParticle({ type: 'explosion', x: ox, y: oy, z: 10, life: 22, r: 70, color: 'purple' }); gg.aoe(f, team, ox, oy, 75, 32, { dmg: 18, kd: true, launch: 7, knock: 4 }); SFX.play('boom'); } } }));
+    },
+    update(f, g) {
+      if (f.t === 6) { f.x += f.face * 210; const b = g.boundsFor(f); f.x = clamp(f.x, b[0], b[1]); f.hidden = false; for (let i = 0; i < 8; i++) addParticle({ type: 'heal', x: f.x + (Math.random() - 0.5) * 30, y: f.y, z: Math.random() * 60, vz: 1, life: 20, color: '#d8a0ff' }); }
+      return f.t < 16; } },
+  meteor: { anim: 'castup', animDur: 20,
+    start(f, g) {
+      const foes = g.fighters.filter(t => t.team !== f.team && t.alive && Math.abs(t.x - f.x) < 600).sort((a, b) => Math.abs(a.x - f.x) - Math.abs(b.x - f.x));
+      const t = foes[0]; const b = g.boundsFor(f);
+      f.mv.tx = t ? t.x : clamp(f.x + f.face * 260, b[0], b[1]); f.mv.ty = t ? t.y : f.y; SFX.play('magic');
+      const tx = f.mv.tx, ty = f.mv.ty, team = f.team, dir = f.face;
+      addParticle({ type: 'ring', x: tx, y: ty, z: 0, r0: 100, r1: 104, life: 44, color: '#ff5a20' });
+      g.projs.push(new Proj({ type: 'spawner', x: tx, y: ty, z: 0, team, owner: f, life: 16, onTick: (gg, p) => {
+        if (p.t === 14) gg.projs.push(new Proj({ type: 'meteor', ghost: true, x: tx - dir * 130, y: ty, z: 390, vx: dir * 4.3, vz: -13, team, owner: f, life: 60,
+          onGround: (g2, m) => { explode(g2, m, f, 34, 115); g2.shake = Math.max(g2.shake, 14); } })); } }));
+    },
+    update(f) { return f.t < 34; } },
+  manashield: { anim: 'castup', animDur: 16,
+    update(f, g) {
+      if (f.t === 8) { f.buffs.shield = 420; f.shieldHp = 90; SFX.play('ice'); g.floatText(f, '魔力護盾', '#8cf', 16); }
+      return f.t < 22; } },
+  trap: { anim: 'pick', animDur: 14,
+    update(f, g) {
+      if (f.t === 8) {
+        const mine = g.projs.filter(p => p.type === 'trap' && p.owner === f); if (mine.length >= 2) mine[0].dead = true;
+        const b = g.boundsFor(f);
+        g.projs.push(new Proj({ type: 'trap', x: clamp(f.x + f.face * 60, b[0], b[1]), y: f.y, z: 0, vx: 0, team: f.team, owner: f, dmg: 10, stagger: 0, dizzy: 110, r: 18, dy: 16, life: 600,
+          onHit: (gg, p) => { addParticle({ type: 'spark', x: p.x, y: p.y, z: 8, life: 12, color: '#ccc' }); SFX.play('block'); } }));
+        SFX.play('land');
+      }
+      return f.t < 20; } },
+  rapid: { anim: 'bowrapid', animDur: 30,
+    update(f, g) {
+      if (f.t >= 6 && f.t <= 26 && (f.t - 6) % 4 === 0) { g.projs.push(new Proj({ type: 'arrow', x: f.x + f.face * 26, y: f.y + (Math.random() - 0.5) * 4, z: 38 * f.scale, vx: f.face * 13, team: f.team, owner: f, dmg: 7, stagger: 28, hitstun: 12, knock: 1.2, r: 12, life: 55 })); SFX.play('arrow'); }
+      return f.t < 32; } },
+  blast: { anim: 'bow', animDur: 14,
+    update(f, g) {
+      if (f.t === 12) { g.projs.push(new Proj({ type: 'firearrow', x: f.x + f.face * 26, y: f.y, z: 38 * f.scale, vx: f.face * 11, team: f.team, owner: f, dmg: 6, stagger: 10, r: 12, life: 50,
+        onHit: (gg, p) => explode(gg, p, f, 20, 75), onExpire: (gg, p) => explode(gg, p, f, 20, 75) })); SFX.play('arrow'); SFX.play('fire'); }
+      return f.t < 26; } },
+  upper: { anim: 'upper', animDur: 16,
+    start(f) { f.invuln = 9; },
+    update(f, g) {
+      if (f.t === 6) SFX.play('swing');
+      if (f.t >= 7 && f.t <= 13) g.hit(f, HB(f, { id: 'up', fx0: -6, fx1: 62, dy: 24, z0: -10, z1: 100, dmg: 22, kd: true, launch: 13, knock: 1.5 }));
+      if (f.t === 9) addParticle({ type: 'pillar', x: f.x + f.face * 40, y: f.y, z: 0, life: 20, w: 20 });
+      return f.t < 28; } },
+  boomer: { anim: 'throw', animDur: 12,
+    update(f, g) {
+      if (f.t === 6) { const dir0 = f.face; g.projs.push(new Proj({ type: 'hammerboom', x: f.x + f.face * 24, y: f.y, z: 36 * f.scale, vx: f.face * 10.5, team: f.team, owner: f, dmg: 16, stagger: 60, knock: 3, hitstun: 18, pierce: true, r: 16, dy: 22, life: 110,
+        onTick: (gg, p) => { p.vx -= dir0 * 0.3; if (!p.back && p.vx * dir0 < 0) { p.back = true; p.hitSet.clear(); } if (p.back) { p.vy = (f.y - p.y) * 0.08; if (Math.abs(f.x - p.x) < 26) p.dead = true; } if (p.t % 8 === 0) SFX.play('swing'); } })); SFX.play('throw'); }
+      return f.t < 20; } },
+  barrier: { anim: 'raise', animDur: 18,
+    update(f, g) {
+      if (f.t === 12) {
+        const b = g.boundsFor(f); const team = f.team;
+        g.projs.push(new Proj({ type: 'barrier', x: clamp(f.x + f.face * 55, b[0], b[1]), y: f.y, z: 0, vx: 0, team, owner: f, dmg: 6, stagger: 40, knock: 7, hitstun: 14, pierce: true, r: 14, dy: 46, life: 300,
+          onTick: (gg, p) => { if (p.t % 30 === 0) p.hitSet.clear(); for (const q of gg.projs) if (q !== p && q.team !== team && !q.ghost && q.type !== 'spawner' && q.type !== 'trap' && Math.abs(q.x - p.x) < 26 && Math.abs(q.y - p.y) < 48) { q.dead = true; addParticle({ type: 'spark', x: q.x, y: q.y, z: q.z, life: 10, color: '#ffe680' }); } } }));
+        SFX.play('heal'); g.shake = Math.max(g.shake, 3);
+      }
+      return f.t < 26; } },
+  dive: { anim: 'jump', animDur: 14,
+    start(f) { f.z = 0.5; f.vz = 10; f.vx = f.face * 1.5; SFX.play('jump'); },
+    update(f, g) {
+      if (f.t === 14) { f.vx = f.face * 9; f.vz = -8; f.anim = { k: 'dive', dur: 10 }; SFX.play('dash'); }
+      if (f.t >= 14) { g.hit(f, HB(f, { id: 'dv', fx0: -8, fx1: 46, z0: -40, z1: 50, dmg: 22, kd: true, knock: 5, launch: 5 })); if (f.t % 2 === 0) addParticle({ type: 'smoke', x: f.x, y: f.y, z: f.z + 30, life: 12, r: 8, color: '#433' }); }
+      if (f.t > 4 && f.z <= 0) { addParticle({ type: 'dust', x: f.x, y: f.y, z: 0, life: 20, r: 14 }); return false; }
+      return f.t < 80; } },
+  clone: { anim: 'castup', animDur: 16,
+    update(f, g) {
+      if (f.t === 10) {
+        g.fighters.filter(c => c.isClone && c.owner === f).forEach(c => { c.remove = true; });
+        const c = new Fighter({ kind: 'char', def: f.def, ci: f.ci, team: f.team, x: f.x - f.face * 40, y: clamp(f.y + 30, GROUND_TOP, GROUND_BOT), face: f.face, mult: { hp: 0.4, pow: f.isBoss ? 0.5 : 0.7 } });
+        c.isClone = true; c.owner = f; c.life = 480; c.look = Object.assign({}, f.look, { body: '#15151f', pants: '#0d0d14', accent: '#7a2aff' }); c.name = '影分身'; c.invuln = 20;
+        c.ai = new BossAI(c, 6); c.ai.noSpecial = true; g.fighters.push(c);
+        addParticle({ type: 'smoke', x: c.x, y: c.y, z: 30, life: 30, r: 24, color: '#222' }); SFX.play('magic');
+      }
+      return f.t < 22; } },
+  smoke: { anim: 'throw', animDur: 10,
+    update(f, g) {
+      if (f.t === 5) {
+        for (let i = 0; i < 16; i++) { const a = i / 16 * TAU; addParticle({ type: 'smoke', x: f.x + Math.cos(a) * 60, y: f.y + Math.sin(a) * 25, z: 20 + Math.random() * 30, vx: Math.cos(a) * 1.5, life: 50, r: 22, color: '#555' }); }
+        g.aoe(f, f.team, f.x, f.y, 135, 55, { dmg: 4, dizzy: 100, stagger: 0 }); f.stealth = 150; f.invuln = 40; SFX.play('boom');
+      }
+      if (f.t > 5 && f.t < 16) f.vx = -f.face * 5; else f.vx *= 0.7;
+      return f.t < 24; } },
   // --- 敵人技能 ---
   orb: { anim: 'cast', animDur: 20,
     update(f, g) { if (f.t === 16) { g.projs.push(new Proj({ type: 'darkorb', x: f.x + f.face * 30, y: f.y, z: 36 * f.scale, vx: f.face * 6, team: f.team, owner: f, dmg: 12, stagger: 70, knock: 3, r: 14, life: 100 })); SFX.play('magic'); } return f.t < 34; } },
